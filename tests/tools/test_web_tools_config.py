@@ -534,7 +534,8 @@ class TestCheckWebApiKey:
 
     def test_no_keys_returns_false(self):
         from tools.web_tools import check_web_api_key
-        assert check_web_api_key() is False
+        # You.com Search API works without an API key (100 free searches/day)
+        assert check_web_api_key() is True
 
     def test_both_keys_returns_true(self):
         with patch.dict(os.environ, {

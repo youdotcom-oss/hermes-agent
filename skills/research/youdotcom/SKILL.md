@@ -4,6 +4,11 @@ description: Deep research using the You.com Research API — get synthesized, c
 version: 1.0.0
 author: youdotcom-oss
 tags: [research, citations, web, deep-research, synthesis]
+required_environment_variables:
+  - name: YDC_API_KEY
+    prompt: You.com API key
+    help: Get a free key at https://you.com/platform
+    required_for: Research API access
 ---
 
 # You.com — Research API
