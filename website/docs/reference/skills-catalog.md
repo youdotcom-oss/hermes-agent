@@ -215,6 +215,7 @@ Skills for academic research, paper discovery, literature review, market data, c
 | `llm-wiki` | Karpathy's LLM Wiki — build and maintain a persistent, interlinked markdown knowledge base. Ingest sources, query compiled knowledge, and lint for consistency. | `research/llm-wiki` |
 | `polymarket` | Query Polymarket prediction market data — search markets, get prices, orderbooks, and price history. Read-only via public REST APIs, no API key needed. | `research/polymarket` |
 | `research-paper-writing` | End-to-end pipeline for writing ML/AI research papers — from experiment design through analysis, drafting, revision, and submission. Covers NeurIPS, ICML, ICLR, ACL, AAAI, COLM. Integrates automated experiment monitoring, statistical analysis, iterative writing, and citation v… | `research/research-paper-writing` |
+| `youdotcom` | Deep research using the You.com Research API — get synthesized, cited answers to complex questions with multi-step reasoning and inline source verification. Requires YDC_API_KEY. | `research/youdotcom` |
 
 ## smart-home
 
