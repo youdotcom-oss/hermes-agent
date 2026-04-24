@@ -64,6 +64,47 @@ _CHARS_PER_TOKEN = 4
 _SUMMARY_FAILURE_COOLDOWN_SECONDS = 600
 
 
+def _content_text_for_contains(content: Any) -> str:
+    """Return a best-effort text view of message content.
+
+    Used only for substring checks when we need to know whether we've already
+    appended a note to a message. Keeps multimodal lists intact elsewhere.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def _append_text_to_content(content: Any, text: str, *, prepend: bool = False) -> Any:
+    """Append or prepend plain text to message content safely.
+
+    Compression sometimes needs to add a note or merge a summary into an
+    existing message. Message content may be plain text or a multimodal list of
+    blocks, so direct string concatenation is not always safe.
+    """
+    if content is None:
+        return text
+    if isinstance(content, str):
+        return text + content if prepend else content + text
+    if isinstance(content, list):
+        text_block = {"type": "text", "text": text}
+        return [text_block, *content] if prepend else [*content, text_block]
+    rendered = str(content)
+    return text + rendered if prepend else rendered + text
+
+
 def _truncate_tool_call_args_json(args: str, head_chars: int = 200) -> str:
     """Shrink long string values inside a tool-call arguments JSON blob while
     preserving JSON validity.
@@ -807,7 +848,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                 )
                 self.summary_model = ""  # empty = use main model
                 self._summary_failure_cooldown_until = 0.0  # no cooldown
-                return self._generate_summary(messages, summary_budget)  # retry immediately
+                return self._generate_summary(turns_to_summarize, focus_topic=focus_topic)  # retry immediately
 
             # Transient errors (timeout, rate limit, network) — shorter cooldown
             _transient_cooldown = 60
@@ -1059,6 +1100,21 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         return max(cut_idx, head_end + 1)
 
     # ------------------------------------------------------------------
+    # ContextEngine: manual /compress preflight
+    # ------------------------------------------------------------------
+
+    def has_content_to_compress(self, messages: List[Dict[str, Any]]) -> bool:
+        """Return True if there is a non-empty middle region to compact.
+
+        Overrides the ABC default so the gateway ``/compress`` guard can
+        skip the LLM call when the transcript is still entirely inside
+        the protected head/tail.
+        """
+        compress_start = self._align_boundary_forward(messages, self.protect_first_n)
+        compress_end = self._find_tail_cut_by_tokens(messages, compress_start)
+        return compress_start < compress_end
+
+    # ------------------------------------------------------------------
     # Main compression entry point
     # ------------------------------------------------------------------
 
@@ -1144,10 +1200,13 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         for i in range(compress_start):
             msg = messages[i].copy()
             if i == 0 and msg.get("role") == "system":
-                existing = msg.get("content") or ""
+                existing = msg.get("content")
                 _compression_note = "[Note: Some earlier conversation turns have been compacted into a handoff summary to preserve context space. The current session state may still reflect earlier work, so build on that summary and state rather than re-doing work.]"
-                if _compression_note not in existing:
-                    msg["content"] = existing + "\n\n" + _compression_note
+                if _compression_note not in _content_text_for_contains(existing):
+                    msg["content"] = _append_text_to_content(
+                        existing,
+                        "\n\n" + _compression_note if isinstance(existing, str) and existing else _compression_note,
+                    )
             compressed.append(msg)
 
         # If LLM summary failed, insert a static fallback so the model
@@ -1191,12 +1250,15 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         for i in range(compress_end, n_messages):
             msg = messages[i].copy()
             if _merge_summary_into_tail and i == compress_end:
-                original = msg.get("content") or ""
-                msg["content"] = (
+                merged_prefix = (
                     summary
                     + "\n\n--- END OF CONTEXT SUMMARY — "
                     "respond to the message below, not the summary above ---\n\n"
-                    + original
+                )
+                msg["content"] = _append_text_to_content(
+                    msg.get("content"),
+                    merged_prefix,
+                    prepend=True,
                 )
                 _merge_summary_into_tail = False
             compressed.append(msg)
