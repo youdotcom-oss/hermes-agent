@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Set
 
 
 from hermes_cli.config import (
+    cfg_get,
     load_config, save_config, get_env_value, save_env_value,
 )
 from hermes_cli.colors import Colors, color
@@ -55,6 +56,7 @@ CONFIGURABLE_TOOLSETS = [
     ("file",            "📁 File Operations",           "read, write, patch, search"),
     ("code_execution",  "⚡ Code Execution",            "execute_code"),
     ("vision",          "👁️  Vision / Image Analysis",  "vision_analyze"),
+    ("video",           "🎬 Video Analysis",            "video_analyze (requires video-capable model)"),
     ("image_gen",       "🎨 Image Generation",          "image_generate"),
     ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
     ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
@@ -77,7 +79,7 @@ CONFIGURABLE_TOOLSETS = [
 # Toolsets that are OFF by default for new installs.
 # They're still in _HERMES_CORE_TOOLS (available at runtime if enabled),
 # but the setup checklist won't pre-select them for first-time users.
-_DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant", "rl", "spotify", "discord", "discord_admin"}
+_DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant", "rl", "spotify", "discord", "discord_admin", "video"}
 
 # Platform-scoped toolsets: only appear in the `hermes tools` checklist for
 # these platforms, and only resolve/save for these platforms.  A toolset
@@ -226,6 +228,14 @@ TOOL_CATEGORIES = {
                 "tts_provider": "kittentts",
                 "post_setup": "kittentts",
             },
+            {
+                "name": "Piper",
+                "badge": "local · free",
+                "tag": "Local neural TTS, 44 languages (voices ~20-90MB)",
+                "env_vars": [],
+                "tts_provider": "piper",
+                "post_setup": "piper",
+            },
         ],
     },
     "web": {
@@ -297,6 +307,32 @@ TOOL_CATEGORIES = {
                 "env_vars": [
                     {"key": "YDC_API_KEY", "prompt": "You.com API key (optional for search, required for extract)", "url": "https://you.com/platform"},
                 ],
+            },
+            {
+                "name": "SearXNG",
+                "badge": "free · self-hosted · search only",
+                "tag": "Privacy-respecting metasearch engine — search only (pair with any extract provider)",
+                "web_backend": "searxng",
+                "env_vars": [
+                    {"key": "SEARXNG_URL", "prompt": "Your SearXNG instance URL (e.g., http://localhost:8080)", "url": "https://searxng.github.io/searxng/"},
+                ],
+            },
+            {
+                "name": "Brave Search (Free Tier)",
+                "badge": "free tier · search only",
+                "tag": "2,000 queries/mo free — search only (pair with any extract provider)",
+                "web_backend": "brave-free",
+                "env_vars": [
+                    {"key": "BRAVE_SEARCH_API_KEY", "prompt": "Brave Search subscription token", "url": "https://brave.com/search/api/"},
+                ],
+            },
+            {
+                "name": "DuckDuckGo (ddgs)",
+                "badge": "free · no key · search only",
+                "tag": "Search via the ddgs Python package — no API key (pair with any extract provider)",
+                "web_backend": "ddgs",
+                "env_vars": [],
+                "post_setup": "ddgs",
             },
         ],
     },
@@ -632,6 +668,59 @@ def _run_post_setup(post_setup_key: str):
             _print_warning("    kittentts install timed out (>5min)")
             _print_info(f"    Run manually: python -m pip install -U '{wheel_url}' soundfile")
 
+    elif post_setup_key == "piper":
+        try:
+            __import__("piper")
+            _print_success("    piper-tts is already installed")
+        except ImportError:
+            import subprocess
+            _print_info("    Installing piper-tts (~14MB wheel, voices downloaded on first use)...")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-U", "piper-tts", "--quiet"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if result.returncode == 0:
+                    _print_success("    piper-tts installed")
+                else:
+                    _print_warning("    piper-tts install failed:")
+                    _print_info(f"      {result.stderr.strip()[:300]}")
+                    _print_info("    Run manually: python -m pip install -U piper-tts")
+                    return
+            except subprocess.TimeoutExpired:
+                _print_warning("    piper-tts install timed out (>5min)")
+                _print_info("    Run manually: python -m pip install -U piper-tts")
+                return
+        _print_info("    Default voice: en_US-lessac-medium (downloaded on first TTS call)")
+        _print_info("    Full voice list: https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md")
+        _print_info("    Switch voices by setting tts.piper.voice in ~/.hermes/config.yaml")
+
+    elif post_setup_key == "ddgs":
+        try:
+            __import__("ddgs")
+            _print_success("    ddgs is already installed")
+        except ImportError:
+            import subprocess
+            _print_info("    Installing ddgs (DuckDuckGo search package)...")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-U", "ddgs", "--quiet"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if result.returncode == 0:
+                    _print_success("    ddgs installed")
+                else:
+                    _print_warning("    ddgs install failed:")
+                    _print_info(f"      {result.stderr.strip()[:300]}")
+                    _print_info("    Run manually: python -m pip install -U ddgs")
+                    return
+            except subprocess.TimeoutExpired:
+                _print_warning("    ddgs install timed out (>5min)")
+                _print_info("    Run manually: python -m pip install -U ddgs")
+                return
+        _print_info("    No API key required. DuckDuckGo enforces server-side rate limits.")
+        _print_info("    Pair with an extract provider if you also need web_extract.")
+
     elif post_setup_key == "spotify":
         # Run the full `hermes auth spotify` flow — if the user has no
         # client_id yet, this drops them into the interactive wizard
@@ -789,7 +878,12 @@ def _get_platform_tools(
     toolset_names = platform_toolsets.get(platform)
 
     if toolset_names is None or not isinstance(toolset_names, list):
-        default_ts = PLATFORMS[platform]["default_toolset"]
+        plat_info = PLATFORMS.get(platform)
+        if plat_info:
+            default_ts = plat_info["default_toolset"]
+        else:
+            # Plugin platform — derive toolset name from platform key
+            default_ts = f"hermes-{platform}"
         toolset_names = [default_ts]
 
     # YAML may parse bare numeric names (e.g. ``12306:``) as int.
@@ -852,7 +946,9 @@ def _get_platform_tools(
     # checklist or in a user-saved config.  Must run in BOTH branches —
     # otherwise saving via `hermes tools` (which flips has_explicit_config
     # to True) silently drops them.
-    platform_tool_universe = set(resolve_toolset(PLATFORMS[platform]["default_toolset"]))
+    _plat_info = PLATFORMS.get(platform)
+    _default_ts = _plat_info["default_toolset"] if _plat_info else f"hermes-{platform}"
+    platform_tool_universe = set(resolve_toolset(_default_ts))
     configurable_tool_universe = set()
     for ck in configurable_keys:
         configurable_tool_universe.update(resolve_toolset(ck))
@@ -974,7 +1070,7 @@ def _save_platform_tools(config: dict, platform: str, enabled_toolset_keys: Set[
     platform_default_keys = {p["default_toolset"] for p in PLATFORMS.values()}
 
     # Get existing toolsets for this platform
-    existing_toolsets = config.get("platform_toolsets", {}).get(platform, [])
+    existing_toolsets = cfg_get(config, "platform_toolsets", platform, default=[])
     if not isinstance(existing_toolsets, list):
         existing_toolsets = []
     existing_toolsets = [str(ts) for ts in existing_toolsets]
@@ -1361,23 +1457,23 @@ def _is_provider_active(provider: dict, config: dict) -> bool:
         if provider.get("tts_provider"):
             return (
                 feature.managed_by_nous
-                and config.get("tts", {}).get("provider") == provider["tts_provider"]
+                and cfg_get(config, "tts", "provider") == provider["tts_provider"]
             )
         if "browser_provider" in provider:
-            current = config.get("browser", {}).get("cloud_provider")
+            current = cfg_get(config, "browser", "cloud_provider")
             return feature.managed_by_nous and provider["browser_provider"] == current
         if provider.get("web_backend"):
-            current = config.get("web", {}).get("backend")
+            current = cfg_get(config, "web", "backend")
             return feature.managed_by_nous and current == provider["web_backend"]
         return feature.managed_by_nous
 
     if provider.get("tts_provider"):
-        return config.get("tts", {}).get("provider") == provider["tts_provider"]
+        return cfg_get(config, "tts", "provider") == provider["tts_provider"]
     if "browser_provider" in provider:
-        current = config.get("browser", {}).get("cloud_provider")
+        current = cfg_get(config, "browser", "cloud_provider")
         return provider["browser_provider"] == current
     if provider.get("web_backend"):
-        current = config.get("web", {}).get("backend")
+        current = cfg_get(config, "web", "backend")
         return current == provider["web_backend"]
     if provider.get("imagegen_backend"):
         image_cfg = config.get("image_gen", {})
@@ -1788,7 +1884,7 @@ def _reconfigure_tool(config: dict):
         cat = TOOL_CATEGORIES.get(ts_key)
         reqs = TOOLSET_ENV_REQUIREMENTS.get(ts_key)
         if cat or reqs:
-            if _toolset_has_keys(ts_key, config):
+            if _toolset_has_keys(ts_key, config) or _toolset_enabled_for_reconfigure(ts_key, config):
                 configurable.append((ts_key, ts_label))
 
     if not configurable:
@@ -1812,6 +1908,28 @@ def _reconfigure_tool(config: dict):
         _reconfigure_simple_requirements(ts_key)
 
     save_config(config)
+
+
+def _toolset_enabled_for_reconfigure(ts_key: str, config: dict) -> bool:
+    """Return True if a configurable toolset is enabled anywhere.
+
+    Reconfigure must include enabled-but-unconfigured categories so users can
+    finish provider/API-key setup without disabling and re-enabling the toolset.
+    """
+    for platform in PLATFORMS:
+        if not _toolset_allowed_for_platform(ts_key, platform):
+            continue
+        try:
+            enabled = _get_platform_tools(
+                config,
+                platform,
+                include_default_mcp_servers=False,
+            )
+        except Exception:
+            continue
+        if ts_key in enabled:
+            return True
+    return False
 
 
 def _configure_tool_category_for_reconfig(ts_key: str, cat: dict, config: dict):
@@ -1863,21 +1981,27 @@ def _reconfigure_provider(provider: dict, config: dict):
             return
 
     if provider.get("tts_provider"):
-        config.setdefault("tts", {})["provider"] = provider["tts_provider"]
+        tts_cfg = config.setdefault("tts", {})
+        tts_cfg["provider"] = provider["tts_provider"]
+        tts_cfg["use_gateway"] = bool(managed_feature)
         _print_success(f"  TTS provider set to: {provider['tts_provider']}")
 
     if "browser_provider" in provider:
         bp = provider["browser_provider"]
+        browser_cfg = config.setdefault("browser", {})
         if bp == "local":
-            config.setdefault("browser", {})["cloud_provider"] = "local"
+            browser_cfg["cloud_provider"] = "local"
             _print_success("  Browser set to local mode")
         elif bp:
-            config.setdefault("browser", {})["cloud_provider"] = bp
+            browser_cfg["cloud_provider"] = bp
             _print_success(f"  Browser cloud provider set to: {bp}")
+        browser_cfg["use_gateway"] = bool(managed_feature)
 
     # Set web search backend in config if applicable
     if provider.get("web_backend"):
-        config.setdefault("web", {})["backend"] = provider["web_backend"]
+        web_cfg = config.setdefault("web", {})
+        web_cfg["backend"] = provider["web_backend"]
+        web_cfg["use_gateway"] = bool(managed_feature)
         _print_success(f"  Web backend set to: {provider['web_backend']}")
 
     if managed_feature and managed_feature not in ("web", "tts", "browser"):
