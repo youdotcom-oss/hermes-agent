@@ -538,6 +538,24 @@ class TestOptionalEnvVarsRegistry:
         from hermes_cli.config import OPTIONAL_ENV_VARS
         assert OPTIONAL_ENV_VARS["TAVILY_API_KEY"]["password"] is True
 
+    def test_youdotcom_api_key_is_tool_secret(self):
+        """YDC_API_KEY is categorized and masked like other tool secrets."""
+        from hermes_cli.config import OPTIONAL_ENV_VARS
+
+        metadata = OPTIONAL_ENV_VARS["YDC_API_KEY"]
+        assert metadata["category"] == "tool"
+        assert metadata["password"] is True
+
+    def test_youdotcom_crawl_timeout_config_set_writes_env(self, tmp_path):
+        """YDC_CRAWL_TIMEOUT is read from .env, so config set must write there."""
+        from hermes_cli.config import set_config_value
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            set_config_value("YDC_CRAWL_TIMEOUT", "15")
+
+            assert load_env()["YDC_CRAWL_TIMEOUT"] == "15"
+            assert not (tmp_path / "config.yaml").exists()
+
     def test_tavily_api_key_has_url(self):
         """TAVILY_API_KEY has a URL."""
         from hermes_cli.config import OPTIONAL_ENV_VARS

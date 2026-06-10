@@ -1,6 +1,6 @@
 ---
 name: youdotcom
-description: Deep research using You.com Research and Finance Research APIs to get synthesized, cited answers to complex web and financial questions.
+description: Research cited web and finance questions.
 version: 1.0.0
 author: youdotcom-oss
 tags: [research, citations, web, finance, deep-research, synthesis]
